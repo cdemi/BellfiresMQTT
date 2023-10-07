@@ -1,7 +1,7 @@
 ﻿using MQTTnet;
 using MQTTnet.Client;
 using MQTTnet.Extensions.ManagedClient;
-using SimpleTcp;
+using SuperSimpleTcp;
 using System.Text;
 
 namespace BellfiresMQTTServer
@@ -12,6 +12,7 @@ namespace BellfiresMQTTServer
         private readonly ILogger<MertikFireplace> _logger;
         private readonly SimpleTcpClient _simpleTcpClient;
         private readonly IManagedMqttClient mqttClient;
+        private Timer _statusTimer;
         const string prefix = "0233303330333033303830";
         const string statusCommand = "303303";
         const string onCommand = "314103";
@@ -23,37 +24,51 @@ namespace BellfiresMQTTServer
             _config = config;
             _logger = logger;
             _simpleTcpClient = new SimpleTcpClient(config.GetValue<string>("FireplaceIPPort"));
+            _simpleTcpClient.Keepalive = new SimpleTcpKeepaliveSettings { 
+                EnableTcpKeepAlives = true
+            };
             _simpleTcpClient.Events.Connected += Connected;
             _simpleTcpClient.Events.Disconnected += Disconnected;
             _simpleTcpClient.Events.DataReceived += DataReceived;
-            _simpleTcpClient.Logger = (log) =>
-            {
-                _logger.LogInformation("SimpleTCP Log: {log}", log);
-            };
+            //_simpleTcpClient.Logger = (log) =>
+            //{
+            //    _logger.LogInformation("SimpleTCP Log: {log}", log);
+            //};
 
             mqttClient = new MqttFactory().CreateManagedMqttClient();
+
+        }
+
+        private async void statusTimerCallback(object? state)
+        {
+            await SendCommand(statusCommand);
         }
 
         async Task SendCommand(string command)
         {
-            await _simpleTcpClient.SendAsync(StringToByteArray($"{prefix}{command}"));
-        }
-
-        void Connected(object sender, EventArgs e)
-        {
-            _logger.LogInformation("Fireplace Connected");
-        }
-
-        void Disconnected(object sender, EventArgs e)
-        {
-            _logger.LogInformation("Fireplace Disconnected");
-            while (!_simpleTcpClient.IsConnected)
+            try
             {
-                _simpleTcpClient.Connect();
+                await _simpleTcpClient.SendAsync(StringToByteArray($"{prefix}{command}"));
+            }
+            catch (Exception ex) 
+            {
+                _logger.LogError("Could not send command to Fireplace :(");
             }
         }
 
-        void DataReceived(object sender, DataReceivedEventArgs e)
+        async void Connected(object sender, EventArgs e)
+        {
+            _logger.LogInformation("Fireplace Connected");
+            await SendCommand(statusCommand);
+        }
+
+        async void Disconnected(object sender, EventArgs e)
+        {
+            _logger.LogError("Fireplace Disconnected");
+            await connectToFireplace();
+        }
+
+        async void DataReceived(object sender, DataReceivedEventArgs e)
         {
             try
             {
@@ -63,8 +78,8 @@ namespace BellfiresMQTTServer
 
                 fireplaceStatus.FlameHeight = int.Parse(statusData.Substring(14, 2), System.Globalization.NumberStyles.HexNumber);
 
-                _logger.LogCritical("Fireplace Status: {fireplaceStatus}", fireplaceStatus);
-                UpdateMQTT(fireplaceStatus);
+                _logger.LogInformation("Fireplace Status: {fireplaceStatus}", fireplaceStatus);
+                await UpdateMQTT(fireplaceStatus);
             }
             catch
             {
@@ -92,7 +107,7 @@ namespace BellfiresMQTTServer
 
         public async Task StartAsync(CancellationToken cancellationToken)
         {
-            _simpleTcpClient.ConnectWithRetries();
+            await connectToFireplace();
             var options = new ManagedMqttClientOptionsBuilder()
                 .WithAutoReconnectDelay(TimeSpan.FromSeconds(5))
                 .WithClientOptions(new MqttClientOptionsBuilder()
@@ -105,14 +120,14 @@ namespace BellfiresMQTTServer
             mqttClient.ApplicationMessageReceivedAsync += MqttClient_ApplicationMessageReceivedAsync;
             await mqttClient.SubscribeAsync(new MqttTopicFilterBuilder().WithTopic($"{mqttTopicPrefix}set").Build());
             await mqttClient.StartAsync(options);
-            
-            await SendCommand(statusCommand);
+
+            _statusTimer = new Timer(statusTimerCallback, null, TimeSpan.FromSeconds(10), TimeSpan.FromSeconds(10));
         }
 
         private async Task MqttClient_ApplicationMessageReceivedAsync(MqttApplicationMessageReceivedEventArgs arg)
         {
             var turnOn = Encoding.UTF8.GetString(arg.ApplicationMessage.Payload)=="1";
-            _logger.LogCritical("MQTT Command Received {command}", turnOn);
+            _logger.LogInformation("MQTT Command Received {command}", turnOn);
 
             if (turnOn)
                 await SendCommand(onCommand);
@@ -120,8 +135,25 @@ namespace BellfiresMQTTServer
                 await SendCommand(offCommand);
         }
 
-        public async Task StopAsync(CancellationToken cancellationToken)
+        public Task StopAsync(CancellationToken cancellationToken)
         {
+            return Task.CompletedTask;
+        }
+
+        private async Task connectToFireplace()
+        {
+            while (true)
+            {
+                try
+                {
+                    _simpleTcpClient.ConnectWithRetries();
+                    break;
+                }
+                catch
+                {
+                    await Task.Delay(1000);
+                }
+            }
         }
     }
 }
