@@ -17,7 +17,10 @@ namespace BellfiresMQTTServer
         const string statusCommand = "303303";
         const string onCommand = "314103";
         const string offCommand = "313003";
-        const string mqttTopicPrefix = "bellfires/status/";
+        const string mqttTopicPrefix = "bellfires/";
+        const string mqttStatusTopicPrefix = $"{mqttTopicPrefix}status/";
+        const string mqttFlameHeightTopicPrefix = $"{mqttTopicPrefix}flameHeight/";
+        string[] flameSteps = { "3830", "3842", "3937", "4132", "4145", "4239", "4335", "4430", "4443", "4537", "4633", "4646" };
 
         public MertikFireplace(IConfiguration config, ILogger<MertikFireplace> logger)
         {
@@ -93,7 +96,8 @@ namespace BellfiresMQTTServer
 
         public async Task UpdateMQTT(FireplaceStatus fireplaceStatus)
         {
-            await mqttClient.PublishAsync($"{mqttTopicPrefix}get", fireplaceStatus.IsOn ? "1" : "0", MQTTnet.Protocol.MqttQualityOfServiceLevel.AtLeastOnce, true);
+            await mqttClient.PublishAsync($"{mqttStatusTopicPrefix}get", fireplaceStatus.IsOn ? "1" : "0", MQTTnet.Protocol.MqttQualityOfServiceLevel.AtLeastOnce, true);
+            await mqttClient.PublishAsync($"{mqttFlameHeightTopicPrefix}get", fireplaceStatus.FlameHeight.ToString(), MQTTnet.Protocol.MqttQualityOfServiceLevel.AtLeastOnce, true);
         }
 
         byte[] StringToByteArray(string hex)
@@ -122,7 +126,8 @@ namespace BellfiresMQTTServer
                 .Build();
 
             mqttClient.ApplicationMessageReceivedAsync += MqttClient_ApplicationMessageReceivedAsync;
-            await mqttClient.SubscribeAsync(new MqttTopicFilterBuilder().WithTopic($"{mqttTopicPrefix}set").Build());
+            await mqttClient.SubscribeAsync(new MqttTopicFilterBuilder().WithTopic($"{mqttStatusTopicPrefix}set").Build(),
+                new MqttTopicFilterBuilder().WithTopic($"{mqttFlameHeightTopicPrefix}set").Build());
             await mqttClient.StartAsync(options);
 
             _statusTimer = new Timer(statusTimerCallback, null, TimeSpan.FromSeconds(10), TimeSpan.FromSeconds(10));
@@ -130,13 +135,22 @@ namespace BellfiresMQTTServer
 
         private async Task MqttClient_ApplicationMessageReceivedAsync(MqttApplicationMessageReceivedEventArgs arg)
         {
-            var turnOn = Encoding.UTF8.GetString(arg.ApplicationMessage.Payload) == "1";
-            _logger.LogInformation("MQTT Command Received {command}", turnOn);
+            if (arg.ApplicationMessage.Topic.StartsWith(mqttStatusTopicPrefix))
+            {
+                var turnOn = Encoding.UTF8.GetString(arg.ApplicationMessage.Payload) == "1";
+                _logger.LogInformation("MQTT Command Received {command}", turnOn);
 
-            if (turnOn)
-                await SendCommand(onCommand);
-            else
-                await SendCommand(offCommand);
+                if (turnOn)
+                    await SendCommand(onCommand);
+                else
+                    await SendCommand(offCommand);
+            }
+            else if (arg.ApplicationMessage.Topic.StartsWith(mqttFlameHeightTopicPrefix))
+            {
+                var requestedFlameHeight = Convert.ToInt32(Encoding.UTF8.GetString(arg.ApplicationMessage.Payload));
+                _logger.LogInformation("MQTT Flame Height Request Received {requestedFlameHeight}", requestedFlameHeight);
+                await SendCommand($"3136{flameSteps[requestedFlameHeight-1]}03");
+            }
         }
 
         public Task StopAsync(CancellationToken cancellationToken)
