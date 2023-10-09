@@ -24,7 +24,8 @@ namespace BellfiresMQTTServer
             _config = config;
             _logger = logger;
             _simpleTcpClient = new SimpleTcpClient(config.GetValue<string>("FireplaceIPPort"));
-            _simpleTcpClient.Keepalive = new SimpleTcpKeepaliveSettings { 
+            _simpleTcpClient.Keepalive = new SimpleTcpKeepaliveSettings
+            {
                 EnableTcpKeepAlives = true
             };
             _simpleTcpClient.Events.Connected += Connected;
@@ -50,7 +51,7 @@ namespace BellfiresMQTTServer
             {
                 await _simpleTcpClient.SendAsync(StringToByteArray($"{prefix}{command}"));
             }
-            catch (Exception ex) 
+            catch (Exception ex)
             {
                 _logger.LogError("Could not send command to Fireplace :(");
             }
@@ -72,11 +73,14 @@ namespace BellfiresMQTTServer
         {
             try
             {
-                var statusData = System.Text.Encoding.Default.GetString(e.Data).Substring(1);
+                var statusData = Encoding.Default.GetString(e.Data).Substring(1);
 
-                FireplaceStatus fireplaceStatus = new FireplaceStatus();
+                var fireplaceStatus = new FireplaceStatus();
 
-                fireplaceStatus.FlameHeight = int.Parse(statusData.Substring(14, 2), System.Globalization.NumberStyles.HexNumber);
+                var intFlameHeight = int.Parse(statusData.Substring(14, 2), System.Globalization.NumberStyles.HexNumber);
+                fireplaceStatus.IsOn = intFlameHeight > 123;
+                intFlameHeight = intFlameHeight = (int)Math.Round((intFlameHeight - 128) / 128.0 * 12) + 1;
+                fireplaceStatus.FlameHeight = intFlameHeight > 0 ? intFlameHeight : 0;
 
                 _logger.LogInformation("Fireplace Status: {fireplaceStatus}", fireplaceStatus);
                 await UpdateMQTT(fireplaceStatus);
@@ -126,7 +130,7 @@ namespace BellfiresMQTTServer
 
         private async Task MqttClient_ApplicationMessageReceivedAsync(MqttApplicationMessageReceivedEventArgs arg)
         {
-            var turnOn = Encoding.UTF8.GetString(arg.ApplicationMessage.Payload)=="1";
+            var turnOn = Encoding.UTF8.GetString(arg.ApplicationMessage.Payload) == "1";
             _logger.LogInformation("MQTT Command Received {command}", turnOn);
 
             if (turnOn)

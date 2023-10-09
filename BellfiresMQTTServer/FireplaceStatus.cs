@@ -1,5 +1,5 @@
 ﻿public record FireplaceStatus
 {
-    public bool IsOn => FlameHeight >= 128;
+    public bool IsOn { get; set; }
     public int FlameHeight { get; set; }
 }
