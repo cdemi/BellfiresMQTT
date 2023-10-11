@@ -10,7 +10,7 @@ namespace BellfiresMQTTServer
     {
         private readonly IConfiguration _config;
         private readonly ILogger<MertikFireplace> _logger;
-        private readonly SimpleTcpClient _simpleTcpClient;
+        private SimpleTcpClient _simpleTcpClient;
         private readonly IManagedMqttClient mqttClient;
         private Timer _statusTimer;
         const string prefix = "0233303330333033303830";
@@ -26,18 +26,7 @@ namespace BellfiresMQTTServer
         {
             _config = config;
             _logger = logger;
-            _simpleTcpClient = new SimpleTcpClient(config.GetValue<string>("FireplaceIPPort"));
-            _simpleTcpClient.Keepalive = new SimpleTcpKeepaliveSettings
-            {
-                EnableTcpKeepAlives = true
-            };
-            _simpleTcpClient.Events.Connected += Connected;
-            _simpleTcpClient.Events.Disconnected += Disconnected;
-            _simpleTcpClient.Events.DataReceived += DataReceived;
-            //_simpleTcpClient.Logger = (log) =>
-            //{
-            //    _logger.LogInformation("SimpleTCP Log: {log}", log);
-            //};
+            
 
             mqttClient = new MqttFactory().CreateManagedMqttClient();
 
@@ -56,7 +45,7 @@ namespace BellfiresMQTTServer
             }
             catch (Exception ex)
             {
-                _logger.LogError("Could not send command to Fireplace :(");
+                _logger.LogError(ex, "Could not send command to Fireplace :(");
             }
         }
 
@@ -158,12 +147,32 @@ namespace BellfiresMQTTServer
             return Task.CompletedTask;
         }
 
+        private void InitializeTCPClient()
+        {
+            _simpleTcpClient?.Dispose();
+            _simpleTcpClient = new SimpleTcpClient(_config.GetValue<string>("FireplaceIPPort"))
+            {
+                Keepalive = new SimpleTcpKeepaliveSettings
+                {
+                    EnableTcpKeepAlives = true
+                }
+            };
+            _simpleTcpClient.Events.Connected += Connected;
+            _simpleTcpClient.Events.Disconnected += Disconnected;
+            _simpleTcpClient.Events.DataReceived += DataReceived;
+            _simpleTcpClient.Logger = (log) =>
+            {
+                _logger.LogInformation("SimpleTCP Log: {log}", log);
+            };
+        }
+
         private async Task connectToFireplace()
         {
             while (true)
             {
                 try
                 {
+                    InitializeTCPClient();
                     _simpleTcpClient.ConnectWithRetries();
                     break;
                 }
