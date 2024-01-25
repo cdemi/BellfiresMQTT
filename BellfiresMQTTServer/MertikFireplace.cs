@@ -34,7 +34,7 @@ namespace BellfiresMQTTServer
 
         private async void statusTimerCallback(object? state)
         {
-            await SendCommand(statusCommand);
+            //await SendCommand(statusCommand);
         }
 
         async Task SendCommand(string command)
@@ -45,7 +45,8 @@ namespace BellfiresMQTTServer
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Could not send command to Fireplace :(");
+                await _simpleTcpClient.DisconnectAsync();
+                _logger.LogError("Could not send command to Fireplace :( {ex}", ex.Message);
             }
         }
 
@@ -53,10 +54,12 @@ namespace BellfiresMQTTServer
         {
             _logger.LogInformation("Fireplace Connected");
             await SendCommand(statusCommand);
+            _statusTimer = new Timer(statusTimerCallback, null, TimeSpan.FromMinutes(5), TimeSpan.FromSeconds(5));
         }
 
         async void Disconnected(object sender, EventArgs e)
         {
+            _statusTimer!.Dispose();
             _logger.LogError("Fireplace Disconnected");
             await connectToFireplace();
         }
@@ -119,7 +122,6 @@ namespace BellfiresMQTTServer
                 new MqttTopicFilterBuilder().WithTopic($"{mqttFlameHeightTopicPrefix}set").Build());
             await mqttClient.StartAsync(options);
 
-            _statusTimer = new Timer(statusTimerCallback, null, TimeSpan.FromSeconds(10), TimeSpan.FromSeconds(10));
         }
 
         private async Task MqttClient_ApplicationMessageReceivedAsync(MqttApplicationMessageReceivedEventArgs arg)
@@ -154,7 +156,7 @@ namespace BellfiresMQTTServer
             {
                 Keepalive = new SimpleTcpKeepaliveSettings
                 {
-                    EnableTcpKeepAlives = true
+                    EnableTcpKeepAlives = true,
                 }
             };
             _simpleTcpClient.Events.Connected += Connected;
