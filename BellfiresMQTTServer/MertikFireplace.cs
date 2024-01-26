@@ -34,7 +34,7 @@ namespace BellfiresMQTTServer
 
         private async void statusTimerCallback(object? state)
         {
-            //await SendCommand(statusCommand);
+            await SendCommand(statusCommand);
         }
 
         async Task SendCommand(string command)
@@ -54,7 +54,7 @@ namespace BellfiresMQTTServer
         {
             _logger.LogInformation("Fireplace Connected");
             await SendCommand(statusCommand);
-            _statusTimer = new Timer(statusTimerCallback, null, TimeSpan.FromMinutes(5), TimeSpan.FromSeconds(5));
+            _statusTimer = new Timer(statusTimerCallback, null, TimeSpan.FromMinutes(1), TimeSpan.FromMinutes(1));
         }
 
         async void Disconnected(object sender, EventArgs e)
