@@ -107,7 +107,6 @@ namespace BellfiresMQTTServer
 
         public async Task StartAsync(CancellationToken cancellationToken)
         {
-            await connectToFireplace();
             var options = new ManagedMqttClientOptionsBuilder()
                 .WithAutoReconnectDelay(TimeSpan.FromSeconds(5))
                 .WithClientOptions(new MqttClientOptionsBuilder()
@@ -121,7 +120,8 @@ namespace BellfiresMQTTServer
             await mqttClient.SubscribeAsync(new MqttTopicFilterBuilder().WithTopic($"{mqttStatusTopicPrefix}set").Build(),
                 new MqttTopicFilterBuilder().WithTopic($"{mqttFlameHeightTopicPrefix}set").Build());
             await mqttClient.StartAsync(options);
-
+            await Task.Delay(1000);
+            await connectToFireplace();
         }
 
         private async Task MqttClient_ApplicationMessageReceivedAsync(MqttApplicationMessageReceivedEventArgs arg)
