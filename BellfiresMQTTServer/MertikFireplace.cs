@@ -34,13 +34,18 @@ namespace BellfiresMQTTServer
 
         private async void statusTimerCallback(object? state)
         {
-            await SendCommand(statusCommand);
+            await SendCommand(statusCommand, false);
         }
 
-        async Task SendCommand(string command)
+        async Task SendCommand(string command, bool forceReconnect)
         {
             try
             {
+                if (forceReconnect)
+                {
+                    _simpleTcpClient?.Disconnect();
+                    await connectToFireplace();
+                }
                 await _simpleTcpClient.SendAsync(StringToByteArray($"{prefix}{command}"));
             }
             catch (Exception ex)
@@ -53,15 +58,14 @@ namespace BellfiresMQTTServer
         async void Connected(object sender, EventArgs e)
         {
             _logger.LogInformation("Fireplace Connected");
-            await SendCommand(statusCommand);
+            await SendCommand(statusCommand, false);
             _statusTimer = new Timer(statusTimerCallback, null, TimeSpan.FromMinutes(1), TimeSpan.FromMinutes(1));
         }
 
-        async void Disconnected(object sender, EventArgs e)
+        void Disconnected(object sender, EventArgs e)
         {
             _statusTimer!.Dispose();
             _logger.LogError("Fireplace Disconnected");
-            await connectToFireplace();
         }
 
         async void DataReceived(object sender, DataReceivedEventArgs e)
@@ -132,15 +136,15 @@ namespace BellfiresMQTTServer
                 _logger.LogInformation("MQTT Command Received {command}", turnOn);
 
                 if (turnOn)
-                    await SendCommand(onCommand);
+                    await SendCommand(onCommand, true);
                 else
-                    await SendCommand(offCommand);
+                    await SendCommand(offCommand, true);
             }
             else if (arg.ApplicationMessage.Topic.StartsWith(mqttFlameHeightTopicPrefix))
             {
                 var requestedFlameHeight = Convert.ToInt32(Encoding.UTF8.GetString(arg.ApplicationMessage.Payload));
                 _logger.LogInformation("MQTT Flame Height Request Received {requestedFlameHeight}", requestedFlameHeight);
-                await SendCommand($"3136{flameSteps[requestedFlameHeight-1]}03");
+                await SendCommand($"3136{flameSteps[requestedFlameHeight-1]}03", true);
             }
         }
 
