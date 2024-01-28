@@ -55,12 +55,10 @@ namespace BellfiresMQTTServer
         async void Connected(object sender, EventArgs e)
         {
             _logger.LogInformation("Fireplace Connected");
-            _statusTimer = new Timer(statusTimerCallback, null, TimeSpan.FromMinutes(1), TimeSpan.FromMinutes(1));
         }
 
         void Disconnected(object sender, EventArgs e)
         {
-            _statusTimer!.Dispose();
             _logger.LogError("Fireplace Disconnected");
         }
 
@@ -122,6 +120,7 @@ namespace BellfiresMQTTServer
             await mqttClient.StartAsync(options);
             await Task.Delay(1000);
             await connectToFireplace();
+            _statusTimer = new Timer(statusTimerCallback, null, TimeSpan.FromMinutes(1), TimeSpan.FromMinutes(1));
         }
 
         private async Task MqttClient_ApplicationMessageReceivedAsync(MqttApplicationMessageReceivedEventArgs arg)
