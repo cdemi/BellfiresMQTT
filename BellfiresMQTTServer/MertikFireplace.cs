@@ -34,18 +34,16 @@ namespace BellfiresMQTTServer
 
         private async void statusTimerCallback(object? state)
         {
-            await SendCommand(statusCommand, false);
+            await SendCommand(statusCommand);
         }
 
-        async Task SendCommand(string command, bool forceReconnect)
+        async Task SendCommand(string command)
         {
             try
             {
-                if (forceReconnect)
-                {
                     _simpleTcpClient?.Disconnect();
                     await connectToFireplace();
-                }
+
                 await _simpleTcpClient.SendAsync(StringToByteArray($"{prefix}{command}"));
             }
             catch (Exception ex)
@@ -58,7 +56,6 @@ namespace BellfiresMQTTServer
         async void Connected(object sender, EventArgs e)
         {
             _logger.LogInformation("Fireplace Connected");
-            await SendCommand(statusCommand, false);
             _statusTimer = new Timer(statusTimerCallback, null, TimeSpan.FromMinutes(1), TimeSpan.FromMinutes(1));
         }
 
@@ -136,9 +133,9 @@ namespace BellfiresMQTTServer
                 _logger.LogInformation("MQTT Command Received {command}", turnOn);
 
                 if (turnOn)
-                    await SendCommand(onCommand, true);
+                    await SendCommand(onCommand);
                 else
-                    await SendCommand(offCommand, true);
+                    await SendCommand(offCommand);
             }
             else if (arg.ApplicationMessage.Topic.StartsWith(mqttFlameHeightTopicPrefix))
             {
