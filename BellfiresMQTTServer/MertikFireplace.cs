@@ -26,7 +26,7 @@ namespace BellfiresMQTTServer
         {
             _config = config;
             _logger = logger;
-            
+
 
             mqttClient = new MqttFactory().CreateManagedMqttClient();
 
@@ -41,14 +41,13 @@ namespace BellfiresMQTTServer
         {
             try
             {
-                    _simpleTcpClient?.Disconnect();
-                    await connectToFireplace();
+                _simpleTcpClient?.Disconnect();
+                await connectToFireplace();
 
                 await _simpleTcpClient.SendAsync(StringToByteArray($"{prefix}{command}"));
             }
             catch (Exception ex)
             {
-                await _simpleTcpClient.DisconnectAsync();
                 _logger.LogError("Could not send command to Fireplace :( {ex}", ex.Message);
             }
         }
@@ -141,7 +140,7 @@ namespace BellfiresMQTTServer
             {
                 var requestedFlameHeight = Convert.ToInt32(Encoding.UTF8.GetString(arg.ApplicationMessage.Payload));
                 _logger.LogInformation("MQTT Flame Height Request Received {requestedFlameHeight}", requestedFlameHeight);
-                await SendCommand($"3136{flameSteps[requestedFlameHeight-1]}03", true);
+                await SendCommand($"3136{flameSteps[requestedFlameHeight - 1]}03");
             }
         }
 
