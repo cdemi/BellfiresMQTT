@@ -12,6 +12,7 @@ namespace BellfiresMQTTServer
         private readonly ILogger<MertikFireplace> _logger;
         private SimpleTcpClient _simpleTcpClient;
         private readonly IManagedMqttClient mqttClient;
+        private bool isStarting = true;
         private Timer _statusTimer;
         const string prefix = "0233303330333033303830";
         const string statusCommand = "303303";
@@ -115,12 +116,12 @@ namespace BellfiresMQTTServer
                 .Build();
 
             mqttClient.ApplicationMessageReceivedAsync += MqttClient_ApplicationMessageReceivedAsync;
-            await mqttClient.SubscribeAsync(new MqttTopicFilterBuilder().WithTopic($"{mqttStatusTopicPrefix}set").Build(),
-                new MqttTopicFilterBuilder().WithTopic($"{mqttFlameHeightTopicPrefix}set").Build());
+            await mqttClient.SubscribeAsync(new MqttTopicFilterBuilder().WithTopic($"{mqttStatusTopicPrefix}set").WithRetainHandling(MQTTnet.Protocol.MqttRetainHandling.DoNotSendOnSubscribe).Build(),
+                new MqttTopicFilterBuilder().WithTopic($"{mqttFlameHeightTopicPrefix}set").WithRetainHandling(MQTTnet.Protocol.MqttRetainHandling.DoNotSendOnSubscribe).Build());
             await mqttClient.StartAsync(options);
             await Task.Delay(1000);
             await connectToFireplace();
-            _statusTimer = new Timer(statusTimerCallback, null, TimeSpan.FromMinutes(1), TimeSpan.FromMinutes(1));
+            _statusTimer = new Timer(statusTimerCallback, null, TimeSpan.Zero, TimeSpan.FromMinutes(1));
         }
 
         private async Task MqttClient_ApplicationMessageReceivedAsync(MqttApplicationMessageReceivedEventArgs arg)
