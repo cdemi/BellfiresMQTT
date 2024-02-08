@@ -1,19 +1,19 @@
 ﻿using MQTTnet;
 using MQTTnet.Client;
 using MQTTnet.Extensions.ManagedClient;
-using SuperSimpleTcp;
+using System.Net;
+using System.Net.Sockets;
 using System.Text;
 
 namespace BellfiresMQTTServer
 {
-    public class MertikFireplace : IHostedService
+    public class MertikFireplace(IConfiguration config, ILogger<MertikFireplace> logger) : IHostedLifecycleService
     {
-        private readonly IConfiguration _config;
-        private readonly ILogger<MertikFireplace> _logger;
-        private SimpleTcpClient _simpleTcpClient;
-        private readonly IManagedMqttClient mqttClient;
-        private bool isStarting = true;
+        private readonly IManagedMqttClient mqttClient = new MqttFactory().CreateManagedMqttClient();
         private Timer _statusTimer;
+        NetworkStream fireplaceNetworkStream;
+        CancellationTokenSource socketCancellationTokenSource;
+        readonly TimeSpan readTimeout = TimeSpan.FromMinutes(6);
         const string prefix = "0233303330333033303830";
         const string statusCommand = "303303";
         const string onCommand = "314103";
@@ -22,66 +22,74 @@ namespace BellfiresMQTTServer
         const string mqttStatusTopicPrefix = $"{mqttTopicPrefix}status/";
         const string mqttFlameHeightTopicPrefix = $"{mqttTopicPrefix}flameHeight/";
         string[] flameSteps = { "3830", "3842", "3937", "4132", "4145", "4239", "4335", "4430", "4443", "4537", "4633", "4646" };
-
-        public MertikFireplace(IConfiguration config, ILogger<MertikFireplace> logger)
+        public async Task ReconnectLoop(CancellationToken applicationCancellationToken)
         {
-            _config = config;
-            _logger = logger;
+            var ipEndPoint = IPEndPoint.Parse(config.GetValue<string>("FireplaceIPPort")!);
+            while (!applicationCancellationToken.IsCancellationRequested)
+            {
+                try
+                {
+                    TcpClient client = new();
+                    socketCancellationTokenSource = new CancellationTokenSource();
+                    var appAndSocketCancellationToken = CancellationTokenSource.CreateLinkedTokenSource(socketCancellationTokenSource.Token, applicationCancellationToken);
+                    logger.LogInformation("Connecting to {ipEndPoint}", ipEndPoint);
+                    await client.ConnectAsync(ipEndPoint, appAndSocketCancellationToken.Token);
+                    logger.LogInformation("Connected to {ipEndPoint}", ipEndPoint);
 
+                    _statusTimer = new Timer(async (state) => { await SendCommand(statusCommand); }, null, TimeSpan.FromSeconds(1), TimeSpan.FromMinutes(1));
 
-            mqttClient = new MqttFactory().CreateManagedMqttClient();
+                    fireplaceNetworkStream = client.GetStream();
 
+                    await FireplaceTCPClientLoop(fireplaceNetworkStream, appAndSocketCancellationToken.Token);
+                }
+                catch (Exception ex)
+                {
+                    _statusTimer?.Dispose();
+                    logger.LogInformation("Disconnected from {ipEndPoint}", ipEndPoint);
+                    if (!applicationCancellationToken.IsCancellationRequested)
+                    {
+                        logger.LogError(ex, "Error in FireplaceTCPClientLoop");
+                        await Task.Delay(5000, applicationCancellationToken);
+                    }
+                }
+            }
         }
 
-        private async void statusTimerCallback(object? state)
+        public async Task FireplaceTCPClientLoop(NetworkStream stream, CancellationToken appAndSocketCancellationToken)
         {
-            await SendCommand(statusCommand);
+            CancellationTokenSource readTimeoutCts = new(readTimeout);
+            var readAndAppAndSocketCancellationToken = CancellationTokenSource.CreateLinkedTokenSource(appAndSocketCancellationToken, readTimeoutCts.Token);
+
+            while (true)
+            {
+                var buffer = new byte[1_024];
+                int received = await stream.ReadAsync(buffer, readAndAppAndSocketCancellationToken.Token);
+
+                var message = Encoding.UTF8.GetString(buffer, 0, received);
+                logger.LogTrace("Received Fireplace Raw Message {message}", message);
+                await HandleFireplaceStatusUpdate(message);
+            }
         }
 
-        async Task SendCommand(string command)
+        public async Task HandleFireplaceStatusUpdate(string message)
         {
             try
             {
-                _simpleTcpClient?.Disconnect();
-                await connectToFireplace();
-
-                await _simpleTcpClient.SendAsync(StringToByteArray($"{prefix}{command}"));
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError("Could not send command to Fireplace :( {ex}", ex.Message);
-            }
-        }
-
-        async void Connected(object sender, EventArgs e)
-        {
-            _logger.LogInformation("Fireplace Connected");
-        }
-
-        void Disconnected(object sender, EventArgs e)
-        {
-            _logger.LogError("Fireplace Disconnected");
-        }
-
-        async void DataReceived(object sender, DataReceivedEventArgs e)
-        {
-            try
-            {
-                var statusData = Encoding.Default.GetString(e.Data).Substring(1);
+                var statusData = message[1..];
 
                 var fireplaceStatus = new FireplaceStatus();
 
                 var intFlameHeight = int.Parse(statusData.Substring(14, 2), System.Globalization.NumberStyles.HexNumber);
                 fireplaceStatus.IsOn = intFlameHeight > 123;
-                intFlameHeight = intFlameHeight = (int)Math.Round((intFlameHeight - 128) / 128.0 * 12) + 1;
+                intFlameHeight = (int)Math.Round((intFlameHeight - 128) / 128.0 * 12) + 1;
                 fireplaceStatus.FlameHeight = intFlameHeight > 0 ? intFlameHeight : 0;
 
-                _logger.LogInformation("Fireplace Status: {fireplaceStatus}", fireplaceStatus);
+                logger.LogInformation("Fireplace Status: {fireplaceStatus}", fireplaceStatus);
                 await UpdateMQTT(fireplaceStatus);
             }
             catch
             {
-
+                //Could not understand payload
             }
         }
 
@@ -99,19 +107,28 @@ namespace BellfiresMQTTServer
                              .ToArray();
         }
 
-        string ByteArrayToString(byte[] ba)
+        public async Task SendCommand(string command)
         {
-            return BitConverter.ToString(ba).Replace("-", "");
+            try
+            {
+                logger.LogTrace("Sending command {command}", command);
+                await fireplaceNetworkStream.WriteAsync(StringToByteArray($"{prefix}{command}"));
+            }
+            catch (Exception ex)
+            {
+                logger.LogError(ex, "Error sending command {command}", command);
+                socketCancellationTokenSource.Cancel();
+            }
         }
 
-        public async Task StartAsync(CancellationToken cancellationToken)
+        public async Task StartMQTT()
         {
             var options = new ManagedMqttClientOptionsBuilder()
                 .WithAutoReconnectDelay(TimeSpan.FromSeconds(5))
                 .WithClientOptions(new MqttClientOptionsBuilder()
                     .WithClientId("BellfiresMQTTServer")
-                    .WithTcpServer(_config.GetValue<string>("MQTT:Host"))
-                    .WithCredentials(_config.GetValue<string>("MQTT:Username"), _config.GetValue<string>("MQTT:Password"))
+                    .WithTcpServer(config.GetValue<string>("MQTT:Host"))
+                    .WithCredentials(config.GetValue<string>("MQTT:Username"), config.GetValue<string>("MQTT:Password"))
                     .Build())
                 .Build();
 
@@ -119,9 +136,6 @@ namespace BellfiresMQTTServer
             await mqttClient.SubscribeAsync(new MqttTopicFilterBuilder().WithTopic($"{mqttStatusTopicPrefix}set").WithRetainHandling(MQTTnet.Protocol.MqttRetainHandling.DoNotSendOnSubscribe).Build(),
                 new MqttTopicFilterBuilder().WithTopic($"{mqttFlameHeightTopicPrefix}set").WithRetainHandling(MQTTnet.Protocol.MqttRetainHandling.DoNotSendOnSubscribe).Build());
             await mqttClient.StartAsync(options);
-            await Task.Delay(1000);
-            await connectToFireplace();
-            _statusTimer = new Timer(statusTimerCallback, null, TimeSpan.Zero, TimeSpan.FromMinutes(1));
         }
 
         private async Task MqttClient_ApplicationMessageReceivedAsync(MqttApplicationMessageReceivedEventArgs arg)
@@ -129,7 +143,7 @@ namespace BellfiresMQTTServer
             if (arg.ApplicationMessage.Topic.StartsWith(mqttStatusTopicPrefix))
             {
                 var turnOn = Encoding.UTF8.GetString(arg.ApplicationMessage.Payload) == "1";
-                _logger.LogInformation("MQTT Command Received {command}", turnOn);
+                logger.LogInformation("MQTT Command Received {command}", turnOn);
 
                 if (turnOn)
                     await SendCommand(onCommand);
@@ -139,9 +153,26 @@ namespace BellfiresMQTTServer
             else if (arg.ApplicationMessage.Topic.StartsWith(mqttFlameHeightTopicPrefix))
             {
                 var requestedFlameHeight = Convert.ToInt32(Encoding.UTF8.GetString(arg.ApplicationMessage.Payload));
-                _logger.LogInformation("MQTT Flame Height Request Received {requestedFlameHeight}", requestedFlameHeight);
+                logger.LogInformation("MQTT Flame Height Request Received {requestedFlameHeight}", requestedFlameHeight);
                 await SendCommand($"3136{flameSteps[requestedFlameHeight - 1]}03");
             }
+        }
+
+        #region IHostedLifecycleService
+        public Task StartAsync(CancellationToken cancellationToken)
+        {
+            return Task.CompletedTask;
+        }
+
+        public async Task StartedAsync(CancellationToken cancellationToken)
+        {
+            await StartMQTT();
+            _ = ReconnectLoop(cancellationToken);
+        }
+
+        public Task StartingAsync(CancellationToken cancellationToken)
+        {
+            return Task.CompletedTask;
         }
 
         public Task StopAsync(CancellationToken cancellationToken)
@@ -149,40 +180,15 @@ namespace BellfiresMQTTServer
             return Task.CompletedTask;
         }
 
-        private void InitializeTCPClient()
+        public Task StoppedAsync(CancellationToken cancellationToken)
         {
-            _simpleTcpClient?.Dispose();
-            _simpleTcpClient = new SimpleTcpClient(_config.GetValue<string>("FireplaceIPPort"))
-            {
-                Keepalive = new SimpleTcpKeepaliveSettings
-                {
-                    EnableTcpKeepAlives = true,
-                }
-            };
-            _simpleTcpClient.Events.Connected += Connected;
-            _simpleTcpClient.Events.Disconnected += Disconnected;
-            _simpleTcpClient.Events.DataReceived += DataReceived;
-            _simpleTcpClient.Logger = (log) =>
-            {
-                _logger.LogInformation("SimpleTCP Log: {log}", log);
-            };
+            return Task.CompletedTask;
         }
 
-        private async Task connectToFireplace()
+        public Task StoppingAsync(CancellationToken cancellationToken)
         {
-            while (true)
-            {
-                try
-                {
-                    InitializeTCPClient();
-                    _simpleTcpClient.ConnectWithRetries();
-                    break;
-                }
-                catch
-                {
-                    await Task.Delay(1000);
-                }
-            }
+            return Task.CompletedTask;
         }
+        #endregion
     }
 }
