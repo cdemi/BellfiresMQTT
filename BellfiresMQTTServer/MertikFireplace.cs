@@ -16,7 +16,7 @@ namespace BellfiresMQTTServer
         private Timer _statusTimer;
         NetworkStream fireplaceNetworkStream;
         CancellationTokenSource socketCancellationTokenSource;
-        readonly TimeSpan readTimeout = TimeSpan.FromMinutes(6);
+        readonly TimeSpan fireplacePollingInterval = TimeSpan.FromMinutes(1);
         const string prefix = "0233303330333033303830";
         const string statusCommand = "303303";
         const string onCommand = "314103";
@@ -39,7 +39,7 @@ namespace BellfiresMQTTServer
                     await client.ConnectAsync(ipEndPoint, appAndSocketCancellationToken.Token);
                     logger.LogInformation("Connected to {ipEndPoint}", ipEndPoint);
 
-                    _statusTimer = new Timer(async (state) => { await SendCommand(statusCommand); }, null, TimeSpan.FromSeconds(1), TimeSpan.FromMinutes(1));
+                    _statusTimer = new Timer(async (state) => { await SendCommand(statusCommand); }, null, TimeSpan.FromSeconds(1), fireplacePollingInterval);
 
                     fireplaceNetworkStream = client.GetStream();
 
@@ -60,11 +60,11 @@ namespace BellfiresMQTTServer
 
         public async Task FireplaceTCPClientLoop(NetworkStream stream, CancellationToken appAndSocketCancellationToken)
         {
-            CancellationTokenSource readTimeoutCts = new(readTimeout);
-            var readAndAppAndSocketCancellationToken = CancellationTokenSource.CreateLinkedTokenSource(appAndSocketCancellationToken, readTimeoutCts.Token);
-
             while (true)
             {
+                CancellationTokenSource readTimeoutCts = new(fireplacePollingInterval.Add(TimeSpan.FromSeconds(10)));
+                var readAndAppAndSocketCancellationToken = CancellationTokenSource.CreateLinkedTokenSource(appAndSocketCancellationToken, readTimeoutCts.Token);
+
                 var buffer = new byte[1_024];
                 int received = await stream.ReadAsync(buffer, readAndAppAndSocketCancellationToken.Token);
 
