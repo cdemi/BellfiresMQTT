@@ -68,6 +68,12 @@ namespace BellfiresMQTTServer
                 var buffer = new byte[1_024];
                 int received = await stream.ReadAsync(buffer, readAndAppAndSocketCancellationToken.Token);
 
+                if (received==0)
+                {
+                    logger.LogWarning("Remote side has closed the connection");
+                    break;
+                }
+
                 var message = Encoding.UTF8.GetString(buffer, 0, received);
                 logger.LogTrace("Received Fireplace Raw Message {message}", message);
                 await HandleFireplaceStatusUpdate(message);
