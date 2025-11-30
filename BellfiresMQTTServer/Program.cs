@@ -3,13 +3,15 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 
-Host.CreateDefaultBuilder(args).ConfigureServices((hostContext, services) =>
+var builder = Host.CreateApplicationBuilder();
+
+builder.Services.AddHostedService<MertikFireplace>();
+builder.Services.AddLogging(builder =>
 {
-    services.AddHostedService<MertikFireplace>();
-    services.AddLogging(builder =>
-    {
-        builder.AddSimpleConsole(config => {
-            config.TimestampFormat = "[HH:mm:ss] ";
-        });
+    builder.AddSimpleConsole(config => {
+        config.TimestampFormat = "[HH:mm:ss] ";
     });
-}).Build().Run();
+});
+
+var host = builder.Build();
+host.Run();

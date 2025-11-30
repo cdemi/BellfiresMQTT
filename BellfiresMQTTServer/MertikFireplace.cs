@@ -24,7 +24,7 @@ namespace BellfiresMQTTServer
         const string mqttTopicPrefix = "bellfires/";
         const string mqttStatusTopicPrefix = $"{mqttTopicPrefix}status/";
         const string mqttFlameHeightTopicPrefix = $"{mqttTopicPrefix}flameHeight/";
-        string[] flameSteps = { "3830", "3842", "3937", "4132", "4145", "4239", "4335", "4430", "4443", "4537", "4633", "4646" };
+        readonly string[] flameSteps = ["3830", "3842", "3937", "4132", "4145", "4239", "4335", "4430", "4443", "4537", "4633", "4646"];
         public async Task ReconnectLoop(CancellationToken applicationCancellationToken)
         {
             var ipEndPoint = IPEndPoint.Parse(config.GetValue<string>("FireplaceIPPort")!);
@@ -104,16 +104,15 @@ namespace BellfiresMQTTServer
 
         public async Task UpdateMQTT(FireplaceStatus fireplaceStatus)
         {
-            await mqttClient.PublishAsync($"{mqttStatusTopicPrefix}get", fireplaceStatus.IsOn ? "1" : "0", MQTTnet.Protocol.MqttQualityOfServiceLevel.AtLeastOnce, true);
-            await mqttClient.PublishAsync($"{mqttFlameHeightTopicPrefix}get", fireplaceStatus.FlameHeight.ToString(), MQTTnet.Protocol.MqttQualityOfServiceLevel.AtLeastOnce, true);
+            await mqttClient.EnqueueAsync($"{mqttStatusTopicPrefix}get", fireplaceStatus.IsOn ? "1" : "0", MQTTnet.Protocol.MqttQualityOfServiceLevel.AtLeastOnce, true);
+            await mqttClient.EnqueueAsync($"{mqttFlameHeightTopicPrefix}get", fireplaceStatus.FlameHeight.ToString(), MQTTnet.Protocol.MqttQualityOfServiceLevel.AtLeastOnce, true);
         }
 
-        byte[] StringToByteArray(string hex)
+        private static byte[] StringToByteArray(string hex)
         {
-            return Enumerable.Range(0, hex.Length)
+            return [.. Enumerable.Range(0, hex.Length)
                              .Where(x => x % 2 == 0)
-                             .Select(x => Convert.ToByte(hex.Substring(x, 2), 16))
-                             .ToArray();
+                             .Select(x => Convert.ToByte(hex.Substring(x, 2), 16))];
         }
 
         public async Task SendCommand(string command)
@@ -142,8 +141,8 @@ namespace BellfiresMQTTServer
                 .Build();
 
             mqttClient.ApplicationMessageReceivedAsync += MqttClient_ApplicationMessageReceivedAsync;
-            await mqttClient.SubscribeAsync(new MqttTopicFilterBuilder().WithTopic($"{mqttStatusTopicPrefix}set").WithRetainHandling(MQTTnet.Protocol.MqttRetainHandling.DoNotSendOnSubscribe).Build(),
-                new MqttTopicFilterBuilder().WithTopic($"{mqttFlameHeightTopicPrefix}set").WithRetainHandling(MQTTnet.Protocol.MqttRetainHandling.DoNotSendOnSubscribe).Build());
+            await mqttClient.SubscribeAsync([new MqttTopicFilterBuilder().WithTopic($"{mqttStatusTopicPrefix}set").WithRetainHandling(MQTTnet.Protocol.MqttRetainHandling.DoNotSendOnSubscribe).Build(),
+                new MqttTopicFilterBuilder().WithTopic($"{mqttFlameHeightTopicPrefix}set").WithRetainHandling(MQTTnet.Protocol.MqttRetainHandling.DoNotSendOnSubscribe).Build()]);
             await mqttClient.StartAsync(options);
         }
 
@@ -151,7 +150,7 @@ namespace BellfiresMQTTServer
         {
             if (arg.ApplicationMessage.Topic.StartsWith(mqttStatusTopicPrefix))
             {
-                var turnOn = Encoding.UTF8.GetString(arg.ApplicationMessage.Payload) == "1";
+                var turnOn = arg.ApplicationMessage.ConvertPayloadToString() == "1";
                 logger.LogInformation("MQTT Command Received {command}", turnOn);
 
                 if (turnOn)
@@ -161,7 +160,7 @@ namespace BellfiresMQTTServer
             }
             else if (arg.ApplicationMessage.Topic.StartsWith(mqttFlameHeightTopicPrefix))
             {
-                var requestedFlameHeight = Convert.ToInt32(Encoding.UTF8.GetString(arg.ApplicationMessage.Payload));
+                var requestedFlameHeight = Convert.ToInt32(arg.ApplicationMessage.ConvertPayloadToString());
                 logger.LogInformation("MQTT Flame Height Request Received {requestedFlameHeight}", requestedFlameHeight);
                 await SendCommand($"3136{flameSteps[requestedFlameHeight - 1]}03");
             }
