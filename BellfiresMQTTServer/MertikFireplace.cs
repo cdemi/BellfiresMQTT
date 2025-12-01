@@ -141,8 +141,8 @@ namespace BellfiresMQTTServer
                 .Build();
 
             mqttClient.ApplicationMessageReceivedAsync += MqttClient_ApplicationMessageReceivedAsync;
-            await mqttClient.SubscribeAsync([new MqttTopicFilterBuilder().WithTopic($"{mqttStatusTopicPrefix}set").WithRetainHandling(MQTTnet.Protocol.MqttRetainHandling.DoNotSendOnSubscribe).Build(),
-                new MqttTopicFilterBuilder().WithTopic($"{mqttFlameHeightTopicPrefix}set").WithRetainHandling(MQTTnet.Protocol.MqttRetainHandling.DoNotSendOnSubscribe).Build()]);
+            await mqttClient.SubscribeAsync([new MqttTopicFilterBuilder().WithTopic($"{mqttStatusTopicPrefix}set").Build(),
+                new MqttTopicFilterBuilder().WithTopic($"{mqttFlameHeightTopicPrefix}set").Build()]);
             await mqttClient.StartAsync(options);
         }
 
